@@ -1,8 +1,8 @@
 //
-//  todo_Widget_2.swift
+//  todo_Widget_2.swift  
 //  todo Widget 2
 //
-//  TODO Widget connected to real app data
+//  Production TODO Widget - Clean interface with real data
 //
 
 import WidgetKit
@@ -23,43 +23,6 @@ class WidgetDataManager {
         let dataManager = TodoDataManager.shared
         return dataManager.getStatistics()
     }
-    
-    // Fallback sample data if no real data exists
-    func getSampleTodos() -> [TodoItem] {
-        return [
-            TodoItem(
-                title: "Complete project proposal",
-                subtitle: "Add final sections and review",
-                priority: .high,
-                dueDate: Calendar.current.date(byAdding: .hour, value: 2, to: Date()),
-                category: "Work"
-            ),
-            TodoItem(
-                title: "Submit expense report",
-                subtitle: "Include receipts from last month",
-                priority: .critical,
-                dueDate: Calendar.current.date(byAdding: .day, value: -1, to: Date()),
-                category: "Finance"
-            ),
-            TodoItem(
-                title: "Buy groceries",
-                subtitle: "Weekly shopping list",
-                priority: .medium,
-                category: "Personal"
-            )
-        ]
-    }
-    
-    func getSampleStatistics() -> TodoStatistics {
-        return TodoStatistics(
-            totalTodos: 12,
-            completedTodos: 8,
-            pendingTodos: 4,
-            overdueTodos: 1,
-            dueTodayTodos: 2,
-            completionRate: 0.67
-        )
-    }
 }
 
 // MARK: - Timeline Provider
@@ -68,8 +31,8 @@ struct TodoProvider: TimelineProvider {
         let widgetData = WidgetDataManager.shared
         return TodoEntry(
             date: Date(),
-            todos: widgetData.getSampleTodos(),
-            statistics: widgetData.getSampleStatistics()
+            todos: widgetData.getTodos(limit: 10),
+            statistics: widgetData.getStatistics()
         )
     }
     
@@ -80,7 +43,7 @@ struct TodoProvider: TimelineProvider {
         
         let entry = TodoEntry(
             date: Date(),
-            todos: todos.isEmpty ? widgetData.getSampleTodos() : todos,
+            todos: todos,
             statistics: statistics
         )
         completion(entry)
@@ -94,13 +57,13 @@ struct TodoProvider: TimelineProvider {
         let currentDate = Date()
         let entry = TodoEntry(
             date: currentDate,
-            todos: todos.isEmpty ? widgetData.getSampleTodos() : todos,
+            todos: todos,
             statistics: statistics
         )
         
-        // Update more frequently if there are urgent items
+        // Smart update frequency based on urgency
         let hasUrgentItems = todos.contains { $0.isDueToday || $0.isOverdue }
-        let updateInterval = hasUrgentItems ? 5 : 15
+        let updateInterval = hasUrgentItems ? 5 : 15 // minutes
         
         let nextUpdate = Calendar.current.date(byAdding: .minute, value: updateInterval, to: currentDate)!
         let timeline = Timeline(entries: [entry], policy: .after(nextUpdate))
@@ -116,7 +79,7 @@ struct TodoEntry: TimelineEntry {
     let statistics: TodoStatistics
 }
 
-// MARK: - Widget Views
+// MARK: - Widget Entry View
 struct TodoWidgetEntryView: View {
     @Environment(\.widgetFamily) var family
     var entry: TodoEntry
@@ -127,6 +90,8 @@ struct TodoWidgetEntryView: View {
             SmallTodoWidget(entry: entry)
         case .systemMedium:
             MediumTodoWidget(entry: entry)
+        case .systemLarge:
+            LargeTodoWidget(entry: entry)
         default:
             SmallTodoWidget(entry: entry)
         }
@@ -218,7 +183,6 @@ struct SmallTodoWidget: View {
             }
         }
         .padding()
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .containerBackground(.blue.gradient, for: .widget)
     }
 }
@@ -311,7 +275,122 @@ struct MediumTodoWidget: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding()
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .containerBackground(.blue.gradient, for: .widget)
+    }
+}
+
+// MARK: - Large Widget
+struct LargeTodoWidget: View {
+    let entry: TodoEntry
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Header with statistics
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Image(systemName: "checklist")
+                            .foregroundColor(.white)
+                            .font(.title2)
+                        Text("TODO Manager")
+                            .font(.title2.bold())
+                            .foregroundColor(.white)
+                        
+                        if entry.statistics.overdueTodos > 0 {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundColor(.red)
+                                .font(.subheadline)
+                        }
+                    }
+                    
+                    Text("Updated: \(entry.date, style: .time)")
+                        .font(.caption)
+                        .foregroundColor(.white.opacity(0.7))
+                }
+                
+                Spacer()
+                
+                // Circular progress with health indicator
+                ZStack {
+                    Circle()
+                        .stroke(Color.white.opacity(0.3), lineWidth: 4)
+                        .frame(width: 50, height: 50)
+                    
+                    Circle()
+                        .trim(from: 0, to: entry.statistics.completionRate)
+                        .stroke(entry.statistics.isHealthy ? Color.green : Color.orange, 
+                                style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                        .frame(width: 50, height: 50)
+                        .rotationEffect(.degrees(-90))
+                        .animation(.easeInOut(duration: 1.0), value: entry.statistics.completionRate)
+                    
+                    Text("\(entry.statistics.completionPercentage)%")
+                        .font(.caption.bold())
+                        .foregroundColor(.white)
+                }
+            }
+            
+            // Statistics row
+            HStack(spacing: 16) {
+                StatCard(title: "Total", value: "\(entry.statistics.totalTodos)", color: .white)
+                StatCard(title: "Pending", value: "\(entry.statistics.pendingTodos)", color: .orange)
+                StatCard(title: "Done", value: "\(entry.statistics.completedTodos)", color: .green)
+                if entry.statistics.overdueTodos > 0 {
+                    StatCard(title: "Overdue", value: "\(entry.statistics.overdueTodos)", color: .red)
+                }
+                if entry.statistics.dueTodayTodos > 0 {
+                    StatCard(title: "Due Today", value: "\(entry.statistics.dueTodayTodos)", color: .purple)
+                }
+            }
+            
+            Divider()
+                .background(.white.opacity(0.3))
+            
+            // Todo list
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Current Tasks")
+                    .font(.headline.bold())
+                    .foregroundColor(.white)
+                
+                if entry.todos.isEmpty {
+                    VStack(spacing: 8) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.largeTitle)
+                            .foregroundColor(.green)
+                        Text("All caught up!")
+                            .font(.subheadline.bold())
+                            .foregroundColor(.white)
+                        Text("You have no pending tasks")
+                            .font(.caption)
+                            .foregroundColor(.white.opacity(0.7))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                } else {
+                    ForEach(Array(entry.todos.prefix(6).enumerated()), id: \.element.id) { index, todo in
+                        TodoRowView(todo: todo, isCompact: false)
+                        if index < min(5, entry.todos.count - 1) {
+                            Divider()
+                                .background(.white.opacity(0.2))
+                        }
+                    }
+                    
+                    if entry.todos.count > 6 {
+                        HStack {
+                            Spacer()
+                            Text("+ \(entry.todos.count - 6) more tasks")
+                                .font(.caption)
+                                .foregroundColor(.white.opacity(0.6))
+                            Spacer()
+                        }
+                        .padding(.top, 4)
+                    }
+                }
+            }
+            
+            Spacer()
+        }
+        .padding()
         .containerBackground(.blue.gradient, for: .widget)
     }
 }
@@ -335,6 +414,24 @@ struct StatRow: View {
     }
 }
 
+struct StatCard: View {
+    let title: String
+    let value: String
+    let color: Color
+    
+    var body: some View {
+        VStack(spacing: 2) {
+            Text(value)
+                .font(.headline.bold())
+                .foregroundColor(color)
+            Text(title)
+                .font(.caption2)
+                .foregroundColor(.white.opacity(0.8))
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
 struct TodoRowView: View {
     let todo: TodoItem
     let isCompact: Bool
@@ -348,7 +445,7 @@ struct TodoRowView: View {
             
             VStack(alignment: .leading, spacing: 2) {
                 Text(todo.title)
-                    .font(.caption.bold())
+                    .font(isCompact ? .caption : .caption.bold())
                     .lineLimit(isCompact ? 1 : 2)
                     .foregroundColor(.white)
                 
@@ -408,7 +505,7 @@ struct TestWidget: Widget {
         }
         .configurationDisplayName("TODO Manager")
         .description("Stay on top of your tasks with real-time progress and priority items")
-        .supportedFamilies([.systemSmall, .systemMedium])
+        .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
     }
 }
 
@@ -416,15 +513,17 @@ struct TestWidget: Widget {
 #Preview("Small", as: .systemSmall) {
     TestWidget()
 } timeline: {
-    let sampleTodos = WidgetDataManager.shared.getSampleTodos()
-    let sampleStats = WidgetDataManager.shared.getSampleStatistics()
-    TodoEntry(date: Date(), todos: sampleTodos, statistics: sampleStats)
+    TodoEntry(date: Date(), todos: [], statistics: TodoStatistics(totalTodos: 0, completedTodos: 0, pendingTodos: 0, overdueTodos: 0, dueTodayTodos: 0, completionRate: 0))
 }
 
 #Preview("Medium", as: .systemMedium) {
     TestWidget()
 } timeline: {
-    let sampleTodos = WidgetDataManager.shared.getSampleTodos()
-    let sampleStats = WidgetDataManager.shared.getSampleStatistics()
-    TodoEntry(date: Date(), todos: sampleTodos, statistics: sampleStats)
+    TodoEntry(date: Date(), todos: [], statistics: TodoStatistics(totalTodos: 0, completedTodos: 0, pendingTodos: 0, overdueTodos: 0, dueTodayTodos: 0, completionRate: 0))
+}
+
+#Preview("Large", as: .systemLarge) {
+    TestWidget()
+} timeline: {
+    TodoEntry(date: Date(), todos: [], statistics: TodoStatistics(totalTodos: 0, completedTodos: 0, pendingTodos: 0, overdueTodos: 0, dueTodayTodos: 0, completionRate: 0))
 }

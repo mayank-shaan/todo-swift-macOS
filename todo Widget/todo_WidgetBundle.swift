@@ -2,15 +2,16 @@
 //  todo_WidgetBundle.swift
 //  todo Widget
 //
-//  Created by Mayank Shaan Dhania on 04/06/25.
+//  Widget bundle for TODO Manager widgets
 //
 
 import WidgetKit
 import SwiftUI
 
 @main
-struct todo_WidgetBundle: WidgetBundle {
+struct TodoWidgetBundle: WidgetBundle {
     var body: some Widget {
-        todo_Widget()
+        TodoWidget()
+        // Add more widget types here in the future
     }
 }

@@ -1,0 +1,155 @@
+//
+//  SampleDataSeeder.swift
+//  Todo MacOS Widget
+//
+//  Sample data generator for testing and development
+//
+
+import Foundation
+import CoreData
+
+class SampleDataSeeder {
+    static let shared = SampleDataSeeder()
+    private let dataManager = CoreDataManager.shared
+    
+    private init() {}
+    
+    // MARK: - Public Methods
+    func seedSampleData() {
+        // Check if data already exists
+        if !dataManager.fetchAllTodos().isEmpty {
+            print("Sample data already exists, skipping seeding")
+            return
+        }
+        
+        print("Seeding sample todo data...")
+        
+        createHighPriorityTodos()
+        createMediumPriorityTodos()
+        createLowPriorityTodos()
+        createOverdueTodos()
+        createCompletedTodos()
+        
+        print("Sample data seeding completed!")
+    }
+    
+    func clearAllData() {
+        let todos = dataManager.fetchAllTodos()
+        for todo in todos {
+            dataManager.deleteTodo(todo)
+        }
+        print("All todo data cleared")
+    }
+    
+    // MARK: - Private Sample Data Creation
+    private func createHighPriorityTodos() {
+        let highPriorityTasks = [
+            ("Fix critical bug in payment system", "Users unable to complete purchases", "Work", Calendar.current.date(byAdding: .hour, value: 2, to: Date())),
+            ("Prepare quarterly board presentation", "Include financial metrics and growth projections", "Work", Calendar.current.date(byAdding: .day, value: 1, to: Date())),
+            ("Submit tax documents", "Deadline is approaching fast", "Finance", Calendar.current.date(byAdding: .day, value: 3, to: Date())),
+            ("Doctor appointment follow-up", "Call to schedule blood work", "Health", Calendar.current.date(byAdding: .hour, value: 4, to: Date()))
+        ]
+        
+        for (title, subtitle, category, dueDate) in highPriorityTasks {
+            _ = dataManager.createTodo(
+                title: title,
+                subtitle: subtitle,
+                priority: .critical,
+                dueDate: dueDate,
+                category: category
+            )
+        }
+    }
+    
+    private func createMediumPriorityTodos() {
+        let mediumPriorityTasks = [
+            ("Update project documentation", "Add new API endpoints and examples", "Work", Calendar.current.date(byAdding: .day, value: 5, to: Date())),
+            ("Plan weekend trip", "Research hotels and activities", "Personal", Calendar.current.date(byAdding: .day, value: 7, to: Date())),
+            ("Grocery shopping", "Milk, bread, eggs, vegetables", "Personal", nil),
+            ("Review team performance", "Prepare feedback for quarterly reviews", "Work", Calendar.current.date(byAdding: .day, value: 10, to: Date())),
+            ("Update LinkedIn profile", "Add recent projects and skills", "Career", nil)
+        ]
+        
+        for (title, subtitle, category, dueDate) in mediumPriorityTasks {
+            _ = dataManager.createTodo(
+                title: title,
+                subtitle: subtitle,
+                priority: .high,
+                dueDate: dueDate,
+                category: category
+            )
+        }
+    }
+    
+    private func createLowPriorityTodos() {
+        let lowPriorityTasks = [
+            ("Organize photo library", "Sort photos from last vacation", "Personal", nil),
+            ("Read new Swift programming book", "Learn about the latest SwiftUI features", "Learning", nil),
+            ("Clean garage", "Organize tools and donate unused items", "Home", Calendar.current.date(byAdding: .day, value: 14, to: Date())),
+            ("Research new coffee machine", "Compare prices and features", "Shopping", nil),
+            ("Call old friend", "Catch up with college roommate", "Personal", nil)
+        ]
+        
+        for (title, subtitle, category, dueDate) in lowPriorityTasks {
+            _ = dataManager.createTodo(
+                title: title,
+                subtitle: subtitle,
+                priority: .medium,
+                dueDate: dueDate,
+                category: category
+            )
+        }
+    }
+    
+    private func createOverdueTodos() {
+        let overdueTasks = [
+            ("Submit expense report", "Include receipts from last month", "Work", Calendar.current.date(byAdding: .day, value: -2, to: Date())),
+            ("Return library books", "Due last week", "Personal", Calendar.current.date(byAdding: .day, value: -5, to: Date()))
+        ]
+        
+        for (title, subtitle, category, dueDate) in overdueTasks {
+            _ = dataManager.createTodo(
+                title: title,
+                subtitle: subtitle,
+                priority: .high,
+                dueDate: dueDate,
+                category: category
+            )
+        }
+    }
+    
+    private func createCompletedTodos() {
+        let completedTasks = [
+            ("Complete project proposal", "Submitted to client successfully", "Work", nil),
+            ("Buy birthday gift", "Found perfect gift for mom", "Personal", nil),
+            ("Schedule dentist appointment", "Appointment set for next month", "Health", nil),
+            ("Update portfolio website", "Added three new projects", "Career", nil),
+            ("File insurance claim", "Claim processed and approved", "Finance", nil)
+        ]
+        
+        for (title, subtitle, category, dueDate) in completedTasks {
+            let todo = dataManager.createTodo(
+                title: title,
+                subtitle: subtitle,
+                priority: .medium,
+                dueDate: dueDate,
+                category: category
+            )
+            todo.isCompleted = true
+            todo.updatedAt = Calendar.current.date(byAdding: .day, value: -Int.random(in: 1...7), to: Date()) ?? Date()
+            dataManager.updateTodo(todo)
+        }
+    }
+}
+
+#if DEBUG
+extension SampleDataSeeder {
+    func createWidgetTestData() {
+        _ = dataManager.createTodo(title: "Widget Test 1", subtitle: "Short task", priority: .critical, dueDate: Date(), category: "Test")
+        _ = dataManager.createTodo(title: "Widget Test 2", subtitle: "This is a longer description to test text truncation in widget", priority: .high, dueDate: nil, category: "Test")
+        _ = dataManager.createTodo(title: "Widget Test 3", subtitle: nil, priority: .medium, dueDate: Calendar.current.date(byAdding: .hour, value: 2, to: Date()), category: "Test")
+        
+        print("Widget test data created")
+    }
+}
+#endif

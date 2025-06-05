@@ -14,12 +14,14 @@ class WidgetDataManager {
     
     private init() {}
     
-    func getTodos(limit: Int = 10) -> [TodoItem] {
+    @MainActor
+    func getTodos(limit: Int = 10) async -> [TodoItem] {
         let dataManager = TodoDataManager.shared
         return dataManager.fetchIncompleteTodos(limit: limit)
     }
     
-    func getStatistics() -> TodoStatistics {
+    @MainActor
+    func getStatistics() async -> TodoStatistics {
         let dataManager = TodoDataManager.shared
         return dataManager.getStatistics()
     }
@@ -28,47 +30,50 @@ class WidgetDataManager {
 // MARK: - Timeline Provider
 struct TodoProvider: TimelineProvider {
     func placeholder(in context: Context) -> TodoEntry {
-        let widgetData = WidgetDataManager.shared
         return TodoEntry(
             date: Date(),
-            todos: widgetData.getTodos(limit: 10),
-            statistics: widgetData.getStatistics()
+            todos: [],
+            statistics: TodoStatistics(totalTodos: 0, completedTodos: 0, pendingTodos: 0, overdueTodos: 0, dueTodayTodos: 0, completionRate: 0)
         )
     }
     
     func getSnapshot(in context: Context, completion: @escaping (TodoEntry) -> Void) {
-        let widgetData = WidgetDataManager.shared
-        let todos = widgetData.getTodos(limit: 10)
-        let statistics = widgetData.getStatistics()
-        
-        let entry = TodoEntry(
-            date: Date(),
-            todos: todos,
-            statistics: statistics
-        )
-        completion(entry)
+        Task {
+            let widgetData = WidgetDataManager.shared
+            let todos = await widgetData.getTodos(limit: 10)
+            let statistics = await widgetData.getStatistics()
+            
+            let entry = TodoEntry(
+                date: Date(),
+                todos: todos,
+                statistics: statistics
+            )
+            completion(entry)
+        }
     }
     
     func getTimeline(in context: Context, completion: @escaping (Timeline<TodoEntry>) -> Void) {
-        let widgetData = WidgetDataManager.shared
-        let todos = widgetData.getTodos(limit: 10)
-        let statistics = widgetData.getStatistics()
-        
-        let currentDate = Date()
-        let entry = TodoEntry(
-            date: currentDate,
-            todos: todos,
-            statistics: statistics
-        )
-        
-        // Smart update frequency based on urgency
-        let hasUrgentItems = todos.contains { $0.isDueToday || $0.isOverdue }
-        let updateInterval = hasUrgentItems ? 5 : 15 // minutes
-        
-        let nextUpdate = Calendar.current.date(byAdding: .minute, value: updateInterval, to: currentDate)!
-        let timeline = Timeline(entries: [entry], policy: .after(nextUpdate))
-        
-        completion(timeline)
+        Task {
+            let widgetData = WidgetDataManager.shared
+            let todos = await widgetData.getTodos(limit: 10)
+            let statistics = await widgetData.getStatistics()
+            
+            let currentDate = Date()
+            let entry = TodoEntry(
+                date: currentDate,
+                todos: todos,
+                statistics: statistics
+            )
+            
+            // Smart update frequency based on urgency
+            let hasUrgentItems = todos.contains { $0.isDueToday || $0.isOverdue }
+            let updateInterval = hasUrgentItems ? 5 : 15 // minutes
+            
+            let nextUpdate = Calendar.current.date(byAdding: .minute, value: updateInterval, to: currentDate)!
+            let timeline = Timeline(entries: [entry], policy: .after(nextUpdate))
+            
+            completion(timeline)
+        }
     }
 }
 

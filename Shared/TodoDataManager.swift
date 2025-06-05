@@ -2,54 +2,154 @@
 //  TodoDataManager.swift
 //  Todo MacOS Widget - Shared
 //
-//  Unified data manager for app and widget using file-based storage with App Groups
+//  Enhanced data manager with fallback storage and permissions handling
 //
 
 import Foundation
 import SwiftUI
 import WidgetKit
+import OSLog
 
-// MARK: - Data Manager
+// MARK: - Storage Strategy Enum
+enum StorageStrategy {
+    case appGroup
+    case userDefaults
+    case documentDirectory
+    
+    var displayName: String {
+        switch self {
+        case .appGroup: return "App Group"
+        case .userDefaults: return "User Defaults"
+        case .documentDirectory: return "Documents"
+        }
+    }
+}
+
+// MARK: - Enhanced Data Manager with Fallback Storage
+@MainActor
 class TodoDataManager: ObservableObject {
     static let shared = TodoDataManager()
     
-    // CRITICAL: App Group identifier must match in both targets' entitlements
+    // MARK: - Configuration
     private let appGroupIdentifier = "group.msdtech.todo-macos-widget"
+    private let logger = Logger(subsystem: "msdtech.todo-macos-widget", category: "DataManager")
+    private let userDefaultsKey = "TodoManagerData"
+    private let statisticsKey = "TodoManagerStatistics"
     
+    // MARK: - Published Properties
     @Published var todos: [TodoItem] = []
     @Published var isLoading = false
     @Published var lastError: String?
+    @Published var syncStatus: SyncStatus = .unknown
+    @Published var storageStrategy: StorageStrategy = .appGroup
     
+    // MARK: - Private Properties
     private let fileManager = FileManager.default
     private var dataDirectoryURL: URL?
+    private var permissionsChecked = false
     
+    // MARK: - Initialization
     private init() {
-        setupDataDirectory()
-        loadTodos()
+        Task {
+            await initializeAsync()
+        }
+    }
+    
+    private func initializeAsync() async {
+        await setupStorageStrategy()
+        await loadTodos()
         setupSampleDataIfNeeded()
     }
     
-    // MARK: - File System Setup
-    private func setupDataDirectory() {
-        guard let containerURL = fileManager.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier) else {
-            lastError = "Unable to access App Group container. Check entitlements configuration."
-            print("❌ Error: App Group container not accessible")
+    // MARK: - Storage Strategy Setup
+    private func setupStorageStrategy() async {
+        // Try App Group first
+        if await tryAppGroupStorage() {
+            storageStrategy = .appGroup
+            syncStatus = .ready
+            logger.info("✅ Using App Group storage")
             return
         }
         
-        dataDirectoryURL = containerURL
-        print("✅ App Group container URL: \(containerURL)")
+        // Fallback to Documents directory
+        if await tryDocumentDirectoryStorage() {
+            storageStrategy = .documentDirectory
+            syncStatus = .ready
+            logger.info("📁 Using Documents directory storage")
+            return
+        }
         
-        // Ensure directory exists
+        // Final fallback to UserDefaults
+        storageStrategy = .userDefaults
+        syncStatus = .ready
+        logger.info("💾 Using UserDefaults storage (fallback)")
+    }
+    
+    private func tryAppGroupStorage() async -> Bool {
+        guard let containerURL = fileManager.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier) else {
+            logger.warning("❌ App Group container not accessible")
+            return false
+        }
+        
+        // Test write permissions
+        let testURL = containerURL.appendingPathComponent("test_permissions.txt")
+        
         do {
+            // Ensure directory exists
             try fileManager.createDirectory(at: containerURL, withIntermediateDirectories: true, attributes: nil)
+            
+            // Test write
+            try "test".write(to: testURL, atomically: true, encoding: .utf8)
+            
+            // Test read
+            let _ = try String(contentsOf: testURL)
+            
+            // Clean up test file
+            try? fileManager.removeItem(at: testURL)
+            
+            dataDirectoryURL = containerURL
+            logger.info("✅ App Group storage verified: \(containerURL.path)")
+            return true
+            
         } catch {
-            print("❌ Error creating data directory: \(error)")
-            lastError = "Failed to create data directory: \(error.localizedDescription)"
+            logger.error("❌ App Group storage failed: \(error.localizedDescription)")
+            lastError = "App Group permissions issue: \(error.localizedDescription)"
+            return false
         }
     }
     
-    // MARK: - File URLs
+    private func tryDocumentDirectoryStorage() async -> Bool {
+        guard let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            return false
+        }
+        
+        let todoDirectoryURL = documentsURL.appendingPathComponent("TodoManager")
+        let testURL = todoDirectoryURL.appendingPathComponent("test_permissions.txt")
+        
+        do {
+            // Create directory
+            try fileManager.createDirectory(at: todoDirectoryURL, withIntermediateDirectories: true, attributes: nil)
+            
+            // Test write
+            try "test".write(to: testURL, atomically: true, encoding: .utf8)
+            
+            // Test read
+            let _ = try String(contentsOf: testURL)
+            
+            // Clean up test file
+            try? fileManager.removeItem(at: testURL)
+            
+            dataDirectoryURL = todoDirectoryURL
+            logger.info("✅ Documents directory storage verified: \(todoDirectoryURL.path)")
+            return true
+            
+        } catch {
+            logger.error("❌ Documents directory storage failed: \(error.localizedDescription)")
+            return false
+        }
+    }
+    
+    // MARK: - File URLs (App Group or Documents Directory)
     private var todosFileURL: URL? {
         return dataDirectoryURL?.appendingPathComponent("todos.json")
     }
@@ -63,44 +163,74 @@ class TodoDataManager: ObservableObject {
     }
     
     // MARK: - CRUD Operations
-    @MainActor
-    func createTodo(title: String, subtitle: String? = nil, priority: TodoPriority = .medium, dueDate: Date? = nil, category: String? = nil) -> TodoItem {
-        var todo = TodoItem(title: title, subtitle: subtitle, priority: priority, dueDate: dueDate, category: category)
+    func createTodo(
+        title: String,
+        subtitle: String? = nil,
+        priority: TodoPriority = .medium,
+        dueDate: Date? = nil,
+        category: String? = nil
+    ) -> TodoItem {
+        var todo = TodoItem(
+            title: title,
+            subtitle: subtitle,
+            priority: priority,
+            dueDate: dueDate,
+            category: category
+        )
         todo.sortOrder = getMaxSortOrder() + 1
         
         todos.append(todo)
-        saveTodos()
+        Task {
+            await saveTodos()
+        }
         
+        logger.info("➕ Created todo: \(title)")
         return todo
     }
     
-    @MainActor
     func updateTodo(_ todo: TodoItem) {
-        guard let index = todos.firstIndex(where: { $0.id == todo.id }) else { return }
+        guard let index = todos.firstIndex(where: { $0.id == todo.id }) else {
+            logger.warning("⚠️ Attempted to update non-existent todo: \(todo.id)")
+            return
+        }
         
         var updatedTodo = todo
         updatedTodo.updatedAt = Date()
         todos[index] = updatedTodo
         
-        saveTodos()
+        Task {
+            await saveTodos()
+        }
+        
+        logger.info("✏️ Updated todo: \(todo.title)")
     }
     
-    @MainActor
     func deleteTodo(_ todo: TodoItem) {
+        let oldCount = todos.count
         todos.removeAll { $0.id == todo.id }
-        saveTodos()
+        
+        if todos.count < oldCount {
+            Task {
+                await saveTodos()
+            }
+            logger.info("🗑️ Deleted todo: \(todo.title)")
+        }
     }
     
-    @MainActor
     func toggleComplete(_ todo: TodoItem) {
         guard let index = todos.firstIndex(where: { $0.id == todo.id }) else { return }
         
         todos[index].isCompleted.toggle()
         todos[index].updatedAt = Date()
-        saveTodos()
+        
+        Task {
+            await saveTodos()
+        }
+        
+        let status = todos[index].isCompleted ? "completed" : "reopened"
+        logger.info("✅ Todo \(status): \(todo.title)")
     }
     
-    @MainActor
     func bulkUpdate(_ updatedTodos: [TodoItem]) {
         for updatedTodo in updatedTodos {
             if let index = todos.firstIndex(where: { $0.id == updatedTodo.id }) {
@@ -109,21 +239,23 @@ class TodoDataManager: ObservableObject {
                 todos[index] = todo
             }
         }
-        saveTodos()
+        
+        Task {
+            await saveTodos()
+        }
+        
+        logger.info("📦 Bulk updated \(updatedTodos.count) todos")
     }
     
     // MARK: - Fetch Operations
     func fetchAllTodos() -> [TodoItem] {
         return todos.sorted { todo1, todo2 in
-            // Incomplete todos first
             if todo1.isCompleted != todo2.isCompleted {
                 return !todo1.isCompleted
             }
-            // Then by priority
             if todo1.priority != todo2.priority {
                 return todo1.priority.rawValue > todo2.priority.rawValue
             }
-            // Finally by creation date
             return todo1.createdAt > todo2.createdAt
         }
     }
@@ -132,19 +264,15 @@ class TodoDataManager: ObservableObject {
         let incompleteTodos = todos
             .filter { !$0.isCompleted }
             .sorted { todo1, todo2 in
-                // Priority first
                 if todo1.priority != todo2.priority {
                     return todo1.priority.rawValue > todo2.priority.rawValue
                 }
-                // Overdue items first
                 if todo1.isOverdue != todo2.isOverdue {
                     return todo1.isOverdue
                 }
-                // Due today next
                 if todo1.isDueToday != todo2.isDueToday {
                     return todo1.isDueToday
                 }
-                // Creation date last
                 return todo1.createdAt > todo2.createdAt
             }
         
@@ -170,11 +298,10 @@ class TodoDataManager: ObservableObject {
     }
     
     func fetchHighPriorityTodos(limit: Int = 5) -> [TodoItem] {
-        return todos
+        return Array(todos
             .filter { !$0.isCompleted && ($0.priority == .high || $0.priority == .critical) }
             .sorted { $0.priority.rawValue > $1.priority.rawValue }
-            .prefix(limit)
-            .map { $0 }
+            .prefix(limit))
     }
     
     func fetchTodosByCategory(_ category: String) -> [TodoItem] {
@@ -184,11 +311,10 @@ class TodoDataManager: ObservableObject {
     }
     
     func fetchRecentlyCompleted(limit: Int = 5) -> [TodoItem] {
-        return todos
+        return Array(todos
             .filter { $0.isCompleted }
             .sorted { $0.updatedAt > $1.updatedAt }
-            .prefix(limit)
-            .map { $0 }
+            .prefix(limit))
     }
     
     // MARK: - Statistics
@@ -207,95 +333,208 @@ class TodoDataManager: ObservableObject {
             completionRate: totalCount > 0 ? Double(completedCount) / Double(totalCount) : 0.0
         )
         
-        saveStatistics(stats)
+        Task {
+            await saveStatistics(stats)
+        }
         return stats
     }
     
     // MARK: - Data Persistence
-    func loadTodos() {
-        guard let url = todosFileURL else {
-            lastError = "Unable to get todos file URL"
-            return
+    func loadTodos() async {
+        isLoading = true
+        syncStatus = .syncing
+        
+        switch storageStrategy {
+        case .appGroup, .documentDirectory:
+            await loadTodosFromFile()
+        case .userDefaults:
+            await loadTodosFromUserDefaults()
         }
         
-        isLoading = true
+        await MainActor.run {
+            isLoading = false
+        }
+    }
+    
+    private func loadTodosFromFile() async {
+        guard let url = todosFileURL else {
+            await MainActor.run {
+                lastError = "Unable to get todos file URL"
+                syncStatus = .failed
+            }
+            return
+        }
         
         do {
             let data = try Data(contentsOf: url)
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
             
-            todos = try decoder.decode([TodoItem].self, from: data)
-            lastError = nil
-            print("✅ Loaded \(todos.count) todos from storage")
-        } catch CocoaError.fileReadNoSuchFile {
-            // File doesn't exist yet - this is normal for first run
-            todos = []
-            print("📝 No existing todos file found - starting fresh")
-        } catch {
-            print("❌ Error loading todos: \(error)")
-            lastError = "Failed to load todos: \(error.localizedDescription)"
+            let loadedTodos = try decoder.decode([TodoItem].self, from: data)
             
-            // Try to load from backup
-            loadFromBackup()
+            await MainActor.run {
+                self.todos = loadedTodos
+                lastError = nil
+                syncStatus = .synced
+                logger.info("✅ Loaded \(loadedTodos.count) todos from \(self.storageStrategy.displayName)")
+            }
+            
+        } catch CocoaError.fileReadNoSuchFile {
+            await MainActor.run {
+                self.todos = []
+                syncStatus = .synced
+                logger.info("📝 No existing todos file found - starting fresh")
+            }
+        } catch {
+            logger.error("❌ Error loading todos from file: \(error)")
+            await loadFromBackup()
         }
-        
-        isLoading = false
     }
     
-    private func loadFromBackup() {
-        guard let backupURL = backupFileURL else { return }
+    private func loadTodosFromUserDefaults() async {
+        do {
+            if let data = UserDefaults.standard.data(forKey: userDefaultsKey) {
+                let decoder = JSONDecoder()
+                decoder.dateDecodingStrategy = .iso8601
+                
+                let loadedTodos = try decoder.decode([TodoItem].self, from: data)
+                
+                await MainActor.run {
+                    self.todos = loadedTodos
+                    lastError = nil
+                    syncStatus = .synced
+                    logger.info("✅ Loaded \(loadedTodos.count) todos from UserDefaults")
+                }
+            } else {
+                await MainActor.run {
+                    self.todos = []
+                    syncStatus = .synced
+                    logger.info("📝 No existing todos in UserDefaults - starting fresh")
+                }
+            }
+        } catch {
+            logger.error("❌ Error loading todos from UserDefaults: \(error)")
+            await MainActor.run {
+                self.todos = []
+                lastError = "Failed to load data: \(error.localizedDescription)"
+                syncStatus = .failed
+            }
+        }
+    }
+    
+    private func loadFromBackup() async {
+        guard storageStrategy != .userDefaults,
+              let backupURL = backupFileURL else {
+            await MainActor.run {
+                self.todos = []
+                lastError = "Failed to load data and no backup available"
+                syncStatus = .failed
+            }
+            return
+        }
         
         do {
             let data = try Data(contentsOf: backupURL)
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
             
-            todos = try decoder.decode([TodoItem].self, from: data)
-            print("✅ Restored \(todos.count) todos from backup")
+            let backupTodos = try decoder.decode([TodoItem].self, from: data)
             
-            // Save the restored data as current
-            saveTodos()
+            await MainActor.run {
+                self.todos = backupTodos
+                lastError = "Restored from backup"
+                syncStatus = .synced
+                logger.info("✅ Restored \(backupTodos.count) todos from backup")
+            }
+            
+            await saveTodos()
+            
         } catch {
-            print("❌ Error loading backup: \(error)")
-            todos = []
+            logger.error("❌ Error loading backup: \(error)")
+            await MainActor.run {
+                self.todos = []
+                lastError = "Failed to load data and backup: \(error.localizedDescription)"
+                syncStatus = .failed
+            }
         }
     }
     
-    private func saveTodos() {
+    private func saveTodos() async {
+        switch storageStrategy {
+        case .appGroup, .documentDirectory:
+            await saveTodosToFile()
+        case .userDefaults:
+            await saveTodosToUserDefaults()
+        }
+    }
+    
+    private func saveTodosToFile() async {
         guard let url = todosFileURL else {
-            lastError = "Unable to get todos file URL"
+            await MainActor.run {
+                lastError = "Unable to get todos file URL"
+                syncStatus = .failed
+            }
             return
         }
         
         do {
             // Create backup first
-            createBackup()
+            await createBackup()
             
             let encoder = JSONEncoder()
             encoder.dateEncodingStrategy = .iso8601
             encoder.outputFormatting = .prettyPrinted
             
-            let data = try encoder.encode(todos)
+            let data = try encoder.encode(self.todos)
             try data.write(to: url, options: .atomic)
             
-            lastError = nil
-            print("✅ Saved \(todos.count) todos to storage")
+            await MainActor.run {
+                lastError = nil
+                syncStatus = .synced
+                logger.info("✅ Saved \(self.todos.count) todos to \(self.storageStrategy.displayName)")
+            }
             
-            // Update statistics
             let _ = getStatistics()
-            
-            // Trigger widget reload
             WidgetCenter.shared.reloadAllTimelines()
             
         } catch {
-            print("❌ Error saving todos: \(error)")
-            lastError = "Failed to save todos: \(error.localizedDescription)"
+            logger.error("❌ Error saving todos to file: \(error)")
+            await MainActor.run {
+                lastError = "Failed to save todos: \(error.localizedDescription)"
+                syncStatus = .failed
+            }
         }
     }
     
-    private func createBackup() {
-        guard let url = todosFileURL,
+    private func saveTodosToUserDefaults() async {
+        do {
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            
+            let data = try encoder.encode(self.todos)
+            UserDefaults.standard.set(data, forKey: userDefaultsKey)
+            
+            await MainActor.run {
+                lastError = nil
+                syncStatus = .synced
+                logger.info("✅ Saved \(self.todos.count) todos to UserDefaults")
+            }
+            
+            let _ = getStatistics()
+            WidgetCenter.shared.reloadAllTimelines()
+            
+        } catch {
+            logger.error("❌ Error saving todos to UserDefaults: \(error)")
+            await MainActor.run {
+                lastError = "Failed to save todos: \(error.localizedDescription)"
+                syncStatus = .failed
+            }
+        }
+    }
+    
+    private func createBackup() async {
+        guard storageStrategy != .userDefaults,
+              let url = todosFileURL,
               let backupURL = backupFileURL,
               fileManager.fileExists(atPath: url.path) else { return }
         
@@ -305,11 +544,20 @@ class TodoDataManager: ObservableObject {
             }
             try fileManager.copyItem(at: url, to: backupURL)
         } catch {
-            print("⚠️ Warning: Could not create backup: \(error)")
+            logger.warning("⚠️ Could not create backup: \(error)")
         }
     }
     
-    private func saveStatistics(_ stats: TodoStatistics) {
+    private func saveStatistics(_ stats: TodoStatistics) async {
+        switch storageStrategy {
+        case .appGroup, .documentDirectory:
+            await saveStatisticsToFile(stats)
+        case .userDefaults:
+            await saveStatisticsToUserDefaults(stats)
+        }
+    }
+    
+    private func saveStatisticsToFile(_ stats: TodoStatistics) async {
         guard let url = statsFileURL else { return }
         
         do {
@@ -320,7 +568,20 @@ class TodoDataManager: ObservableObject {
             let data = try encoder.encode(stats)
             try data.write(to: url, options: .atomic)
         } catch {
-            print("❌ Error saving statistics: \(error)")
+            // Don't fail the whole save operation for statistics
+            logger.warning("⚠️ Could not save statistics to file: \(error)")
+        }
+    }
+    
+    private func saveStatisticsToUserDefaults(_ stats: TodoStatistics) async {
+        do {
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            
+            let data = try encoder.encode(stats)
+            UserDefaults.standard.set(data, forKey: statisticsKey)
+        } catch {
+            logger.warning("⚠️ Could not save statistics to UserDefaults: \(error)")
         }
     }
     
@@ -329,19 +590,59 @@ class TodoDataManager: ObservableObject {
         return todos.map { $0.sortOrder }.max() ?? 0
     }
     
-    @MainActor
     func clearAllData() {
         todos.removeAll()
-        saveTodos()
+        Task {
+            await saveTodos()
+        }
+        logger.info("🗑️ Cleared all data")
     }
     
     func refreshData() {
-        loadTodos()
+        Task {
+            await loadTodos()
+        }
+        logger.info("🔄 Manual data refresh triggered")
     }
     
-    // MARK: - Categories
     func getUniqueCategories() -> [String] {
         return Array(Set(todos.compactMap { $0.category })).sorted()
+    }
+    
+    // MARK: - Storage Strategy Management
+    func getStorageInfo() -> String {
+        switch storageStrategy {
+        case .appGroup:
+            return "App Group (Shared with Widget)"
+        case .documentDirectory:
+            return "Documents Directory (App Only)"
+        case .userDefaults:
+            return "UserDefaults (Limited Sync)"
+        }
+    }
+    
+    func canSyncWithWidget() -> Bool {
+        return storageStrategy == .appGroup
+    }
+    
+    // MARK: - Diagnostic Methods
+    func runDiagnostics() -> [String] {
+        var diagnostics: [String] = []
+        
+        diagnostics.append("Storage Strategy: \(storageStrategy.displayName)")
+        diagnostics.append("Sync Status: \(syncStatus.displayName)")
+        diagnostics.append("Can Sync with Widget: \(canSyncWithWidget() ? "Yes" : "No")")
+        diagnostics.append("Total Todos: \(todos.count)")
+        
+        if let error = lastError {
+            diagnostics.append("Last Error: \(error)")
+        }
+        
+        if let dataURL = dataDirectoryURL {
+            diagnostics.append("Data Directory: \(dataURL.path)")
+        }
+        
+        return diagnostics
     }
     
     // MARK: - Sample Data
@@ -352,9 +653,8 @@ class TodoDataManager: ObservableObject {
     }
     
     private func createSampleData() {
-        print("📝 Creating sample data...")
+        logger.info("📝 Creating sample data...")
         
-        // High priority tasks
         var sampleTodos: [TodoItem] = []
         
         var todo1 = TodoItem(
@@ -378,102 +678,32 @@ class TodoDataManager: ObservableObject {
         sampleTodos.append(todo2)
         
         var todo3 = TodoItem(
-            title: "Submit tax documents",
-            subtitle: "Gather all receipts and financial statements",
-            priority: .critical,
-            dueDate: Calendar.current.date(byAdding: .day, value: 3, to: Date()),
-            category: "Finance"
-        )
-        todo3.sortOrder = 3
-        sampleTodos.append(todo3)
-        
-        // Medium priority tasks
-        var todo4 = TodoItem(
             title: "Update API documentation",
             subtitle: "Add new endpoints and authentication examples",
             priority: .medium,
             dueDate: Calendar.current.date(byAdding: .day, value: 5, to: Date()),
             category: "Development"
         )
-        todo4.sortOrder = 4
-        sampleTodos.append(todo4)
+        todo3.sortOrder = 3
+        sampleTodos.append(todo3)
         
-        var todo5 = TodoItem(
-            title: "Plan team building event",
-            subtitle: "Research venues and activities for Q1 team retreat",
-            priority: .medium,
-            dueDate: Calendar.current.date(byAdding: .day, value: 7, to: Date()),
-            category: "HR"
-        )
-        todo5.sortOrder = 5
-        sampleTodos.append(todo5)
-        
-        var todo6 = TodoItem(
-            title: "Grocery shopping",
-            subtitle: "Weekly groceries: milk, bread, eggs, vegetables, fruits",
-            priority: .medium,
-            category: "Personal"
-        )
-        todo6.sortOrder = 6
-        sampleTodos.append(todo6)
-        
-        // Low priority tasks
-        var todo7 = TodoItem(
-            title: "Organize digital photo library",
-            subtitle: "Sort and tag photos from recent vacation",
-            priority: .low,
-            category: "Personal"
-        )
-        todo7.sortOrder = 7
-        sampleTodos.append(todo7)
-        
-        var todo8 = TodoItem(
-            title: "Read 'Advanced SwiftUI' book",
-            subtitle: "Learn about the latest iOS 17 SwiftUI features",
-            priority: .low,
-            category: "Learning"
-        )
-        todo8.sortOrder = 8
-        sampleTodos.append(todo8)
-        
-        // Overdue task
-        var todo9 = TodoItem(
-            title: "Submit monthly expense report",
-            subtitle: "Include receipts from business trips and client meetings",
-            priority: .high,
-            dueDate: Calendar.current.date(byAdding: .day, value: -2, to: Date()),
-            category: "Finance"
-        )
-        todo9.sortOrder = 9
-        sampleTodos.append(todo9)
-        
-        // Completed tasks
-        var completedTodo1 = TodoItem(
+        var completedTodo = TodoItem(
             title: "Complete client project proposal",
             subtitle: "Delivered comprehensive proposal with timeline and budget",
             priority: .medium,
             category: "Client Work"
         )
-        completedTodo1.isCompleted = true
-        completedTodo1.updatedAt = Calendar.current.date(byAdding: .day, value: -3, to: Date()) ?? Date()
-        completedTodo1.sortOrder = 10
-        sampleTodos.append(completedTodo1)
-        
-        var completedTodo2 = TodoItem(
-            title: "Buy birthday gift for mom",
-            subtitle: "Found perfect jewelry set at local boutique",
-            priority: .medium,
-            category: "Personal"
-        )
-        completedTodo2.isCompleted = true
-        completedTodo2.updatedAt = Calendar.current.date(byAdding: .day, value: -1, to: Date()) ?? Date()
-        completedTodo2.sortOrder = 11
-        sampleTodos.append(completedTodo2)
+        completedTodo.isCompleted = true
+        completedTodo.updatedAt = Calendar.current.date(byAdding: .day, value: -3, to: Date()) ?? Date()
+        completedTodo.sortOrder = 4
+        sampleTodos.append(completedTodo)
         
         todos = sampleTodos
-        saveTodos()
+        Task {
+            await saveTodos()
+        }
         
-        print("✅ Created \(sampleTodos.count) sample todos")
+        logger.info("✅ Created \(sampleTodos.count) sample todos")
     }
     
     // MARK: - Widget Data Access
@@ -491,7 +721,7 @@ class TodoDataManager: ObservableObject {
             let data = try encoder.encode(todos)
             return String(data: data, encoding: .utf8)
         } catch {
-            print("❌ Error exporting todos: \(error)")
+            logger.error("❌ Error exporting todos: \(error)")
             return nil
         }
     }
@@ -505,11 +735,43 @@ class TodoDataManager: ObservableObject {
         do {
             let importedTodos = try decoder.decode([TodoItem].self, from: data)
             todos.append(contentsOf: importedTodos)
-            saveTodos()
+            Task {
+                await saveTodos()
+            }
+            logger.info("📥 Imported \(importedTodos.count) todos")
             return true
         } catch {
-            print("❌ Error importing todos: \(error)")
+            logger.error("❌ Error importing todos: \(error)")
             return false
+        }
+    }
+}
+
+// MARK: - Supporting Types
+enum SyncStatus {
+    case unknown
+    case ready
+    case syncing
+    case synced
+    case failed
+    
+    var displayName: String {
+        switch self {
+        case .unknown: return "Unknown"
+        case .ready: return "Ready"
+        case .syncing: return "Syncing..."
+        case .synced: return "Synced"
+        case .failed: return "Failed"
+        }
+    }
+    
+    var color: Color {
+        switch self {
+        case .unknown: return .gray
+        case .ready: return .blue
+        case .syncing: return .orange
+        case .synced: return .green
+        case .failed: return .red
         }
     }
 }

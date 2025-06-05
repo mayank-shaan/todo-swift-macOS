@@ -14,10 +14,33 @@
 			<key>orderHint</key>
 			<integer>2</integer>
 		</dict>
-		<key>todo WidgetExtension.xcscheme_^#shared#^_</key>
+	</dict>
+	<key>SuppressBuildableAutocreation</key>
+	<dict>
+		<key>4289DB462DEF807500DCF009</key>
 		<dict>
-			<key>orderHint</key>
-			<integer>1</integer>
+			<key>primary</key>
+			<true/>
+		</dict>
+		<key>4289DB542DEF807600DCF009</key>
+		<dict>
+			<key>primary</key>
+			<true/>
+		</dict>
+		<key>4289DB5E2DEF807600DCF009</key>
+		<dict>
+			<key>primary</key>
+			<true/>
+		</dict>
+		<key>4289DB752DEF808E00DCF009</key>
+		<dict>
+			<key>primary</key>
+			<true/>
+		</dict>
+		<key>4289DBCD2DEF992900DCF009</key>
+		<dict>
+			<key>primary</key>
+			<true/>
 		</dict>
 	</dict>
 </dict>

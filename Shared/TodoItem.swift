@@ -8,7 +8,7 @@
 import Foundation
 
 // MARK: - Priority Enum
-enum TodoPriority: Int16, CaseIterable, Codable {
+public enum TodoPriority: Int16, CaseIterable, Codable {
     case low = 0
     case medium = 1
     case high = 2
@@ -43,8 +43,8 @@ enum TodoPriority: Int16, CaseIterable, Codable {
 }
 
 // MARK: - Todo Item Model
-struct TodoItem: Codable, Identifiable, Hashable {
-    let id: UUID
+public struct TodoItem: Codable, Identifiable, Hashable {
+    public let id: UUID
     var title: String
     var subtitle: String?
     var isCompleted: Bool
@@ -130,17 +130,17 @@ struct TodoItem: Codable, Identifiable, Hashable {
     }
     
     // MARK: - Hashable Conformance
-    func hash(into hasher: inout Hasher) {
+    public func hash(into hasher: inout Hasher) {
         hasher.combine(id)
     }
     
-    static func == (lhs: TodoItem, rhs: TodoItem) -> Bool {
+    public static func == (lhs: TodoItem, rhs: TodoItem) -> Bool {
         return lhs.id == rhs.id
     }
 }
 
 // MARK: - Statistics Model
-struct TodoStatistics: Codable {
+public struct TodoStatistics: Codable {
     let totalTodos: Int
     let completedTodos: Int
     let pendingTodos: Int

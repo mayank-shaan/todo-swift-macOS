@@ -27,8 +27,8 @@ enum StorageStrategy {
 
 // MARK: - Enhanced Data Manager with Fallback Storage
 @MainActor
-class TodoDataManager: ObservableObject {
-    static let shared = TodoDataManager()
+public class TodoDataManager: ObservableObject {
+    public static let shared = TodoDataManager()
     
     // MARK: - Configuration
     private let appGroupIdentifier = "group.msdtech.todo-macos-widget"
@@ -47,6 +47,8 @@ class TodoDataManager: ObservableObject {
     private let fileManager = FileManager.default
     private var dataDirectoryURL: URL?
     private var permissionsChecked = false
+    private var _isInitialized = false
+    private let initializationSemaphore = DispatchSemaphore(value: 0)
     
     // MARK: - Initialization
     private init() {
@@ -55,34 +57,56 @@ class TodoDataManager: ObservableObject {
         }
     }
     
+    // MARK: - Initialization Wait Method
+    public func waitForInitialization() async {
+        if _isInitialized { return }
+        
+        await withUnsafeContinuation { continuation in
+            DispatchQueue.global().async {
+                self.initializationSemaphore.wait()
+                continuation.resume()
+            }
+        }
+    }
+    
     private func initializeAsync() async {
         await setupStorageStrategy()
         await loadTodos()
         setupSampleDataIfNeeded()
+        markAsInitialized()
+    }
+    
+    private func markAsInitialized() {
+        _isInitialized = true
+        initializationSemaphore.signal()
+        logger.info("✅ TodoDataManager initialization complete")
     }
     
     // MARK: - Storage Strategy Setup
     private func setupStorageStrategy() async {
-        // Try App Group first
+        // For widget compatibility, prioritize App Group
         if await tryAppGroupStorage() {
             storageStrategy = .appGroup
             syncStatus = .ready
-            logger.info("✅ Using App Group storage")
+            logger.info("✅ Using App Group storage - Widget sync enabled")
             return
         }
+        
+        // Log warning if App Group fails
+        logger.warning("⚠️ App Group storage failed - widget sync will be limited")
         
         // Fallback to Documents directory
         if await tryDocumentDirectoryStorage() {
             storageStrategy = .documentDirectory
             syncStatus = .ready
-            logger.info("📁 Using Documents directory storage")
+            logger.warning("📁 Using Documents directory storage - Widget cannot sync")
             return
         }
         
         // Final fallback to UserDefaults
         storageStrategy = .userDefaults
         syncStatus = .ready
-        logger.info("💾 Using UserDefaults storage (fallback)")
+        logger.warning("💾 Using UserDefaults storage - Limited widget sync")
     }
     
     private func tryAppGroupStorage() async -> Bool {
@@ -145,6 +169,26 @@ class TodoDataManager: ObservableObject {
             
         } catch {
             logger.error("❌ Documents directory storage failed: \(error.localizedDescription)")
+            return false
+        }
+    }
+    
+    // MARK: - App Group Access Verification
+    func ensureAppGroupAccess() -> Bool {
+        guard let containerURL = fileManager.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier) else {
+            logger.error("❌ App Group container not accessible")
+            return false
+        }
+        
+        // Test write access
+        let testFile = containerURL.appendingPathComponent("test_write.txt")
+        do {
+            try "test".write(to: testFile, atomically: true, encoding: .utf8)
+            try fileManager.removeItem(at: testFile)
+            logger.info("✅ App Group access verified")
+            return true
+        } catch {
+            logger.error("❌ App Group write test failed: \(error)")
             return false
         }
     }
@@ -260,7 +304,7 @@ class TodoDataManager: ObservableObject {
         }
     }
     
-    func fetchIncompleteTodos(limit: Int? = nil) -> [TodoItem] {
+    public func fetchIncompleteTodos(limit: Int? = nil) -> [TodoItem] {
         let incompleteTodos = todos
             .filter { !$0.isCompleted }
             .sorted { todo1, todo2 in
@@ -318,7 +362,7 @@ class TodoDataManager: ObservableObject {
     }
     
     // MARK: - Statistics
-    func getStatistics() -> TodoStatistics {
+    public func getStatistics() -> TodoStatistics {
         let totalCount = todos.count
         let completedCount = todos.filter { $0.isCompleted }.count
         let overdueCount = todos.filter { $0.isOverdue }.count
@@ -495,7 +539,9 @@ class TodoDataManager: ObservableObject {
             }
             
             let _ = getStatistics()
-            WidgetCenter.shared.reloadAllTimelines()
+            
+            // Ensure widget reload happens after save is complete
+            await reloadWidgetWithDelay()
             
         } catch {
             logger.error("❌ Error saving todos to file: \(error)")
@@ -504,6 +550,15 @@ class TodoDataManager: ObservableObject {
                 syncStatus = .failed
             }
         }
+    }
+    
+    private func reloadWidgetWithDelay() async {
+        // Reload widget timeline
+        WidgetCenter.shared.reloadAllTimelines()
+        
+        // Add small delay to ensure widget has time to read new data
+        try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
+        logger.debug("🔄 Widget timeline reloaded")
     }
     
     private func saveTodosToUserDefaults() async {
@@ -521,7 +576,9 @@ class TodoDataManager: ObservableObject {
             }
             
             let _ = getStatistics()
-            WidgetCenter.shared.reloadAllTimelines()
+            
+            // Reload widget with delay for UserDefaults sync
+            await reloadWidgetWithDelay()
             
         } catch {
             logger.error("❌ Error saving todos to UserDefaults: \(error)")
@@ -623,6 +680,33 @@ class TodoDataManager: ObservableObject {
     
     func canSyncWithWidget() -> Bool {
         return storageStrategy == .appGroup
+    }
+    
+    // MARK: - Widget Sync Testing
+    func testWidgetSync() -> [String] {
+        var results: [String] = []
+        
+        results.append("=== Widget Sync Diagnostics ===")
+        results.append("Storage Strategy: \(storageStrategy.displayName)")
+        results.append("Sync Status: \(syncStatus.displayName)")
+        results.append("Initialization: \(_isInitialized ? "Complete" : "Pending")")
+        results.append("Can Sync with Widget: \(canSyncWithWidget() ? "Yes" : "No")")
+        
+        // Test App Group access
+        if ensureAppGroupAccess() {
+            results.append("App Group Access: ✅ Working")
+        } else {
+            results.append("App Group Access: ❌ Failed")
+        }
+        
+        results.append("Data Directory: \(dataDirectoryURL?.path ?? "Not Set")")
+        results.append("Total Todos: \(todos.count)")
+        
+        if let error = lastError {
+            results.append("Last Error: \(error)")
+        }
+        
+        return results
     }
     
     // MARK: - Diagnostic Methods

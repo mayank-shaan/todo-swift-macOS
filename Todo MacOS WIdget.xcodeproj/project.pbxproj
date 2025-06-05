@@ -7,10 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		422D948E2DF2256B006FF501 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4289DB782DEF808E00DCF009 /* WidgetKit.framework */; };
+		422D94912DF2256C006FF501 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4289DB7A2DEF808E00DCF009 /* SwiftUI.framework */; };
 		4289DBC42DEF8EFD00DCF009 /* TodoItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4289DBC22DEF8EFD00DCF009 /* TodoItem.swift */; };
 		4289DBC52DEF8EFD00DCF009 /* TodoDataManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4289DBC12DEF8EFD00DCF009 /* TodoDataManager.swift */; };
-		4289DBCF2DEF992900DCF009 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4289DB782DEF808E00DCF009 /* WidgetKit.framework */; };
-		4289DBD02DEF992900DCF009 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4289DB7A2DEF808E00DCF009 /* SwiftUI.framework */; };
 		4289DBDE2DEF992B00DCF009 /* todo Widget 2Extension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 4289DBCE2DEF992900DCF009 /* todo Widget 2Extension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		4289DBE32DEF996700DCF009 /* TodoDataManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4289DBC12DEF8EFD00DCF009 /* TodoDataManager.swift */; };
 		4289DBE42DEF996D00DCF009 /* TodoItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4289DBC22DEF8EFD00DCF009 /* TodoItem.swift */; };
@@ -114,8 +114,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				4289DBD02DEF992900DCF009 /* SwiftUI.framework in Frameworks */,
-				4289DBCF2DEF992900DCF009 /* WidgetKit.framework in Frameworks */,
+				422D94912DF2256C006FF501 /* SwiftUI.framework in Frameworks */,
+				422D948E2DF2256B006FF501 /* WidgetKit.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

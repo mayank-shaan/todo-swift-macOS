@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import WidgetKit
 
 struct ContentView: View {
     @StateObject private var dataManager = TodoDataManager.shared
@@ -151,6 +152,20 @@ struct ContentView: View {
                         if let exportData = dataManager.exportTodos() {
                             print("Export data: \(exportData)")
                         }
+                    }
+                    
+                    Divider()
+                    
+                    Button("Test Widget Sync") {
+                        let diagnostics = dataManager.testWidgetSync()
+                        for result in diagnostics {
+                            print(result)
+                        }
+                    }
+                    
+                    Button("Force Widget Reload") {
+                        WidgetKit.WidgetCenter.shared.reloadAllTimelines()
+                        print("🔄 Forced widget timeline reload")
                     }
                 }
             }
